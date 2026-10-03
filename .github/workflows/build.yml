@@ -1,0 +1,8 @@
+
+Docs:       https://doc.termux.com
+Community:  https://community.termux.com
+
+Working with packages:
+ - Search:  pkg search <query>
+ - Install: pkg install <package>
+ - Upgrade: pkg upgrade
