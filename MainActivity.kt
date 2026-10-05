@@ -1,6 +1,12 @@
 package com.ritchad.app
 
 import android.Manifest
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import java.io.File
 import android.content.ContentValues
 import android.graphics.Bitmap
@@ -125,9 +131,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         applyVoice(tts, getSharedPreferences("r", MODE_PRIVATE))
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(id: String?) {}
-            override fun onDone(id: String?) { runOnUiThread { listen() } }
-            override fun onError(id: String?) { runOnUiThread { listen() } }
+            override fun onStart(id: String?) { runOnUiThread { speaking = true } }
+            override fun onDone(id: String?) { runOnUiThread { speaking = false; listen() } }
+            override fun onError(id: String?) { runOnUiThread { speaking = false; listen() } }
         })
     }
 
@@ -149,6 +155,40 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             dl = err
             if (err.isEmpty()) toast("Offline model ready")
         }
+    }
+
+    private var voiceMode by mutableStateOf(false)
+    private var speaking by mutableStateOf(false)
+    private var paused by mutableStateOf(false)
+    private var level by mutableStateOf(0f)
+    private var caption by mutableStateOf("")
+    private val askVoice = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) startVoice() }
+
+    private fun toggleVoiceMode() {
+        if (voiceMode) { endVoice(); return }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startVoice()
+        else askVoice.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun startVoice() {
+        if (Shared.wakeOn) stopService(Intent(this, WakeService::class.java))
+        speakOn = true; paused = false; caption = ""; voiceMode = true; hands = true
+        listen()
+    }
+
+    private fun endVoice() {
+        voiceMode = false; hands = false; paused = false; caption = ""
+        recognizer?.destroy(); tts.stop(); speaking = false
+    }
+
+    private fun interrupt() {
+        if (speaking) { tts.stop(); speaking = false; listen() }
+    }
+
+    private fun togglePause() {
+        paused = !paused
+        if (paused) { hands = false; recognizer?.destroy(); tts.stop(); speaking = false }
+        else { hands = true; listen() }
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
@@ -221,7 +261,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(r: android.os.Bundle?) {
                     val t = r?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                    if (t != null) send(t) else listen()
+                    if (t != null) { caption = t; send(t) } else listen()
                 }
                 override fun onError(e: Int) {
                     if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) hands = false
@@ -229,14 +269,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 }
                 override fun onReadyForSpeech(p: android.os.Bundle?) {}
                 override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(v: Float) {}
+                override fun onRmsChanged(v: Float) { level = ((v + 2f) / 12f).coerceIn(0f, 1f) }
                 override fun onBufferReceived(b: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onPartialResults(p: android.os.Bundle?) {}
+                override fun onPartialResults(p: android.os.Bundle?) { p?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { caption = it } }
                 override fun onEvent(t: Int, p: android.os.Bundle?) {}
             })
             startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
+                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true))
         }
     }
 
@@ -328,6 +369,10 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                             TextButton(onClick = { pickFile.launch("*/*") }, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(0.dp)) { Text("+", fontSize = 28.sp, color = gold) }
                             TextField(input, { input = it }, Modifier.weight(1f), maxLines = 4, placeholder = { Text("Message Ritchad") },
                                 colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                            if (!canSend) {
+                                Box(Modifier.size(44.dp).clip(CircleShape).background(navy).clickable { toggleVoiceMode() }, contentAlignment = Alignment.Center) { WaveIcon(ivory) }
+                                Spacer(Modifier.width(6.dp))
+                            }
                             Box(Modifier.size(52.dp).scale(if (hands && !canSend) pulse else 1f).clip(CircleShape)
                                 .background(if (canSend) navy else if (hands) Color(0xFFB3402F) else gold)
                                 .clickable { if (canSend) { send(input); input = "" } else toggleMic() }, contentAlignment = Alignment.Center) {
@@ -336,6 +381,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         }
                     }
                 }
+                if (voiceMode) VoiceScreen(navy, gold, ivory)
                 if (showMem) AlertDialog(
                     onDismissRequest = { showMem = false }, containerColor = Color.White,
                     title = { Text("Memories") },
@@ -376,6 +422,59 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     }) { Text("Save") } },
                     dismissButton = { TextButton(onClick = { showSettings = false }) { Text("Close") } }
                 )
+            }
+        }
+    }
+
+    @Composable
+    private fun WaveIcon(color: Color) {
+        Canvas(Modifier.size(22.dp)) {
+            val hs = listOf(0.35f, 0.75f, 1f, 0.6f, 0.3f)
+            val w = size.width / (hs.size * 2 - 1)
+            hs.forEachIndexed { i, h ->
+                val x = w * (i * 2) + w / 2
+                val len = size.height * h
+                drawLine(color, Offset(x, (size.height - len) / 2), Offset(x, (size.height + len) / 2), strokeWidth = w, cap = StrokeCap.Round)
+            }
+        }
+    }
+
+    @Composable
+    private fun Orb(state: Int, lvl: Float, gold: Color, ivory: Color) {
+        val t = rememberInfiniteTransition(label = "orb")
+        val pulse by t.animateFloat(0f, 1f, infiniteRepeatable(tween(if (state == 2) 600 else 1600), RepeatMode.Reverse), label = "op")
+        val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "os")
+        Canvas(Modifier.size(260.dp)) {
+            val c = center
+            val base = size.minDimension / 2
+            val amp = when (state) { 0 -> 0.08f + 0.22f * lvl; 2 -> 0.10f + 0.12f * pulse; else -> 0.05f }
+            drawCircle(gold.copy(alpha = 0.18f), base * (0.72f + amp * 1.6f), c)
+            drawCircle(gold.copy(alpha = 0.35f), base * (0.55f + amp), c)
+            drawCircle(if (state == 2) ivory else gold, base * 0.40f, c)
+            if (state == 1) drawArc(ivory, spin, 100f, false, topLeft = Offset(c.x - base * 0.62f, c.y - base * 0.62f), size = Size(base * 1.24f, base * 1.24f), style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round))
+        }
+    }
+
+    @Composable
+    private fun VoiceScreen(navy: Color, gold: Color, ivory: Color) {
+        val state = if (thinking) 1 else if (speaking) 2 else 0
+        val reply = msgs.lastOrNull { !it.fromUser }?.text ?: ""
+        Dialog(onDismissRequest = { endVoice() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            Column(Modifier.fillMaxSize().background(navy).systemBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.weight(1f))
+                Box(Modifier.clip(CircleShape).clickable { interrupt() }) { Orb(state, level, gold, ivory) }
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    when { paused -> "Paused"; state == 1 -> "Thinking..."; state == 2 -> "Speaking. Tap the orb to interrupt."; else -> caption.ifBlank { "Listening..." } },
+                    color = ivory, fontSize = 18.sp, textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(12.dp))
+                if (reply.isNotBlank()) Text(reply, color = ivory.copy(alpha = 0.7f), fontSize = 14.sp, maxLines = 6, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    OutlinedButton(onClick = { togglePause() }, border = BorderStroke(1.dp, gold)) { Text(if (paused) "Resume" else "Pause", color = ivory) }
+                    Button(onClick = { endVoice() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3402F), contentColor = Color.White)) { Text("End") }
+                }
             }
         }
     }
