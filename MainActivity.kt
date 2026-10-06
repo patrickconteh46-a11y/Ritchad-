@@ -1,6 +1,16 @@
 package com.ritchad.app
 
 import android.Manifest
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.acos
+import kotlin.math.atan2
+import kotlin.math.sin
+import kotlin.math.cos
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.style.TextAlign
@@ -439,19 +449,93 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun DrawScope.arm(s: Offset, t: Offset, outward: Float, k: Float, light: Color, dark: Color) {
+        val l1 = 50f; val l2 = 48f
+        val d = t - s
+        val dist = hypot(d.x, d.y).coerceIn(abs(l1 - l2) + 1f, l1 + l2 - 1f)
+        val a = atan2(d.y, d.x)
+        val ang = acos(((l1 * l1 + dist * dist - l2 * l2) / (2f * l1 * dist)).coerceIn(-1f, 1f))
+        val e1 = Offset(s.x + cos(a + ang) * l1, s.y + sin(a + ang) * l1)
+        val e2 = Offset(s.x + cos(a - ang) * l1, s.y + sin(a - ang) * l1)
+        val e = if (e1.y + 0.8f * outward * e1.x > e2.y + 0.8f * outward * e2.x) e1 else e2
+        val h = Offset(s.x + cos(a) * dist, s.y + sin(a) * dist)
+        fun p(o: Offset) = Offset(o.x * k, o.y * k)
+        drawLine(dark, p(s), p(e), 22f * k, StrokeCap.Round)
+        drawLine(dark, p(e), p(h), 20f * k, StrokeCap.Round)
+        drawLine(light, p(s), p(e), 15f * k, StrokeCap.Round)
+        drawLine(light, p(e), p(h), 13f * k, StrokeCap.Round)
+        drawCircle(Brush.radialGradient(listOf(Color.White, light, dark), p(e) + Offset(-3f * k, -3f * k), 12f * k), 10f * k, p(e))
+        drawCircle(Brush.radialGradient(listOf(Color.White, light, dark), p(h) + Offset(-4f * k, -4f * k), 16f * k), 13f * k, p(h))
+    }
+
     @Composable
     private fun Orb(state: Int, lvl: Float, gold: Color, ivory: Color) {
-        val t = rememberInfiniteTransition(label = "orb")
-        val pulse by t.animateFloat(0f, 1f, infiniteRepeatable(tween(if (state == 2) 600 else 1600), RepeatMode.Reverse), label = "op")
-        val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "os")
-        Canvas(Modifier.size(260.dp)) {
-            val c = center
-            val base = size.minDimension / 2
-            val amp = when (state) { 0 -> 0.08f + 0.22f * lvl; 2 -> 0.10f + 0.12f * pulse; else -> 0.05f }
-            drawCircle(gold.copy(alpha = 0.18f), base * (0.72f + amp * 1.6f), c)
-            drawCircle(gold.copy(alpha = 0.35f), base * (0.55f + amp), c)
-            drawCircle(if (state == 2) ivory else gold, base * 0.40f, c)
-            if (state == 1) drawArc(ivory, spin, 100f, false, topLeft = Offset(c.x - base * 0.62f, c.y - base * 0.62f), size = Size(base * 1.24f, base * 1.24f), style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round))
+        val t = rememberInfiniteTransition(label = "robo")
+        val p1 by t.animateFloat(0f, 6.2832f, infiniteRepeatable(tween(2100, easing = LinearEasing)), label = "p1")
+        val p2 by t.animateFloat(0f, 6.2832f, infiniteRepeatable(tween(2700, easing = LinearEasing)), label = "p2")
+        val mph by t.animateFloat(0f, 3.1416f, infiniteRepeatable(tween(260, easing = LinearEasing)), label = "mp")
+        val blink by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3600, easing = LinearEasing)), label = "bl")
+        val bob by t.animateFloat(-1f, 1f, infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "bo")
+        val lTarget = when (state) { 1 -> Offset(150f, 262f); 2 -> Offset(84f + 14f * sin(p1), 262f + 24f * cos(p1 * 1.3f)); else -> Offset(88f, 292f) }
+        val rTarget = when (state) { 0 -> Offset(240f, 138f); 1 -> Offset(172f, 194f); else -> Offset(216f + 14f * sin(p2 + 1.2f), 258f + 26f * cos(p2 * 0.9f)) }
+        val lh by animateOffsetAsState(lTarget, spring(dampingRatio = 0.8f, stiffness = 150f), label = "lh")
+        val rh by animateOffsetAsState(rTarget, spring(dampingRatio = 0.8f, stiffness = 150f), label = "rh")
+        val tilt by animateFloatAsState(when (state) { 0 -> 7f; 1 -> -6f; else -> 2f * sin(p1) }, spring(stiffness = 120f), label = "tilt")
+        Box(Modifier.size(300.dp, 340.dp)) {
+            Canvas(Modifier.fillMaxSize()) {
+                val k = minOf(size.width / 300f, size.height / 340f)
+                fun P(x: Float, y: Float) = Offset(x * k, y * k)
+                val light = Color(0xFF8DBBFF); val mid = Color(0xFF3F6BFF); val dark = Color(0xFF16299A); val cy = Color(0xFF5FF0FF)
+                translate(0f, 4f * bob * k) {
+                    drawOval(Brush.radialGradient(listOf(Color(0xAA5FF0FF), Color(0x005FF0FF)), P(150f, 318f), 75f * k), P(75f, 306f), Size(150f * k, 26f * k))
+                    drawRoundRect(dark, P(134f, 184f), Size(32f * k, 20f * k), CornerRadius(6f * k))
+                    drawRoundRect(Brush.linearGradient(listOf(light, mid, dark), P(100f, 196f), P(200f, 296f)), P(100f, 196f), Size(100f * k, 104f * k), CornerRadius(40f * k))
+                    drawRoundRect(Color.White.copy(alpha = 0.22f), P(110f, 206f), Size(26f * k, 54f * k), CornerRadius(13f * k))
+                    val cl = 12f + 8f * (if (state == 0) lvl else 0.5f + 0.5f * sin(p1))
+                    drawCircle(Brush.radialGradient(listOf(Color.White, cy, Color(0x005FF0FF)), P(150f, 248f), cl * 1.8f * k), cl * 1.8f * k, P(150f, 248f))
+                    rotate(tilt, P(150f, 190f)) {
+                        for (ex in listOf(64f, 236f)) {
+                            drawCircle(Brush.radialGradient(listOf(light, mid, dark), P(ex - 4f, 124f), 24f * k), 21f * k, P(ex, 128f))
+                            drawCircle(cy.copy(alpha = 0.9f), 11f * k, P(ex, 128f), style = Stroke(3f * k))
+                        }
+                        val ant = 4f * sin(p2)
+                        drawLine(dark, P(150f, 74f), P(150f + ant, 50f), 5f * k, StrokeCap.Round)
+                        drawCircle(Brush.radialGradient(listOf(Color.White, cy, Color(0x005FF0FF)), P(150f + ant, 46f), 14f * k), 12f * k, P(150f + ant, 46f))
+                        drawRoundRect(Brush.linearGradient(listOf(light, mid, dark), P(75f, 70f), P(225f, 190f)), P(75f, 70f), Size(150f * k, 120f * k), CornerRadius(42f * k))
+                        drawRoundRect(Color.White.copy(alpha = 0.28f), P(92f, 76f), Size(66f * k, 9f * k), CornerRadius(5f * k))
+                        drawRoundRect(Brush.verticalGradient(listOf(Color(0xFF0B1238), Color(0xFF1A2878)), P(0f, 92f).y, P(0f, 170f).y), P(90f, 92f), Size(120f * k, 78f * k), CornerRadius(30f * k))
+                        drawRoundRect(Color.White.copy(alpha = 0.06f), P(94f, 96f), Size(50f * k, 26f * k), CornerRadius(14f * k))
+                        val bl = if (blink > 0.95f) 0.12f else 1f
+                        val bg = if (state == 0) 1.18f else 1f
+                        val ox = if (state == 1) -5f else 0f
+                        val oy = if (state == 1) -6f else 0f
+                        fun eye(cx: Float, sy: Float) {
+                            val c = P(cx + ox, 122f + oy)
+                            drawCircle(Color(0x335FF0FF), 20f * k, c)
+                            drawOval(Brush.radialGradient(listOf(Color.White, cy, Color(0xFF2CB5E6)), c, 14f * k),
+                                Offset(c.x - 9f * k * bg, c.y - 12f * k * bg * sy * bl), Size(18f * k * bg, 24f * k * bg * sy * bl))
+                        }
+                        eye(130f, 1f); eye(170f, if (state == 1) 0.55f else 1f)
+                        if (state == 1) {
+                            drawLine(cy, P(114f, 98f), P(142f, 90f), 3.5f * k, StrokeCap.Round)
+                            drawLine(cy, P(160f, 99f), P(186f, 100f), 3.5f * k, StrokeCap.Round)
+                        }
+                        when (state) {
+                            2 -> { val mh = 3f + 12f * abs(sin(mph)); drawRoundRect(cy, P(139f, 146f), Size(22f * k, mh * k), CornerRadius(5f * k)) }
+                            1 -> drawLine(cy, P(142f, 150f), P(158f, 147f), 3f * k, StrokeCap.Round)
+                            else -> drawArc(cy, 20f, 140f, false, P(138f, 138f), Size(24f * k, 18f * k), style = Stroke(3f * k, cap = StrokeCap.Round))
+                        }
+                    }
+                    arm(Offset(104f, 228f), lh, -1f, k, light, dark)
+                    arm(Offset(196f, 228f), rh, 1f, k, light, dark)
+                    if (state == 0) for (i in 1..3) {
+                        val rr = 22f + 11f * i
+                        drawArc(cy.copy(alpha = ((0.8f - 0.18f * i) * (0.35f + 0.65f * lvl)).coerceIn(0f, 1f)), -50f, 100f, false,
+                            P(236f - rr, 128f - rr), Size(2f * rr * k, 2f * rr * k), style = Stroke(3f * k, cap = StrokeCap.Round))
+                    }
+                }
+            }
+            if (state == 1) Text("\uD83E\uDD14", fontSize = 40.sp, modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 10.dp).offset(y = (4f * bob).dp))
         }
     }
 
@@ -460,9 +544,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val state = if (thinking) 1 else if (speaking) 2 else 0
         val reply = msgs.lastOrNull { !it.fromUser }?.text ?: ""
         Dialog(onDismissRequest = { endVoice() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-            Column(Modifier.fillMaxSize().background(navy).systemBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF03040A)).systemBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.weight(1f))
-                Box(Modifier.clip(CircleShape).clickable { interrupt() }) { Orb(state, level, gold, ivory) }
+                Box(Modifier.clickable { interrupt() }) { Orb(state, level, gold, ivory) }
                 Spacer(Modifier.height(24.dp))
                 Text(
                     when { paused -> "Paused"; state == 1 -> "Thinking..."; state == 2 -> "Speaking. Tap the orb to interrupt."; else -> caption.ifBlank { "Listening..." } },
